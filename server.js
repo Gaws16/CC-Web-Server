@@ -84,8 +84,8 @@ app.post('/chat', auth, (req, res) => {
       if (existing) sessionId = existing.sessionId
     }
 
-    // Only apply systemPrompt on new sessions
-    const effectiveSystemPrompt = sessionId ? undefined : systemPrompt
+    // Always pass systemPrompt so Claude keeps its role on resumed sessions
+    const effectiveSystemPrompt = systemPrompt || undefined
 
     // Client disconnect — kill CC subprocess only if we didn't finish normally
     let child = null
