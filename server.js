@@ -17,6 +17,20 @@ try {
 }
 
 const app = express()
+
+// CORS
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  const allowed = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+  if (allowed.length === 0 || allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*')
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+
 app.use(express.json())
 
 const PORT = parseInt(process.env.PORT, 10) || 4242
