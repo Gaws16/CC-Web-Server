@@ -1,0 +1,11 @@
+{
+  "name": "mcp-db-tools",
+  "version": "1.0.0",
+  "description": "MCP server exposing Supabase database tools for Claude",
+  "main": "server.js",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "pg": "^8.13.1"
+  }
+}
