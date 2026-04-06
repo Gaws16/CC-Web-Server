@@ -160,7 +160,7 @@ function sseToolDone(res) {
 
 function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools, model, timeoutMs, onTextDelta, onToolStart, onToolResult, onDone, onError }) {
   const prompt = systemPrompt ? `${systemPrompt}\n\n${message}` : message
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose']
+  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--tools', '']
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath)
   if (allowedTools) args.push('--allowedTools', allowedTools)
   if (model) args.push('--model', model)

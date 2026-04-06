@@ -213,7 +213,7 @@ app.post('/chat/tools', auth, (req, res) => {
       message,
       systemPrompt,
       mcpConfigPath,
-      allowedTools: 'mcp__db__create_table,mcp__db__enable_auth',
+      allowedTools: 'mcp__db__list_tables,mcp__db__create_table,mcp__db__enable_auth',
       model: CC_MODEL,
       timeoutMs: CC_TOOLS_TIMEOUT_MS,
       onTextDelta(text) {

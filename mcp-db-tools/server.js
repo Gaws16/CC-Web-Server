@@ -176,11 +176,48 @@ CREATE POLICY "Users can delete own rows" ON "public"."${table}"
   return `Auth enabled. Tables with auth policies: ${tableList}. Users can sign up with email/password. Generated pages should use @supabase/supabase-js for auth (createClient with URL '${SUPABASE_URL}' and anon key '${SUPABASE_ANON_KEY}'). Use supabase.auth.signUp(), signInWithPassword(), signOut(), getUser() for auth operations.`
 }
 
+// Tool: list_tables
+async function handleListTables() {
+  log('INFO', 'list_tables called')
+  const client = getDbClient()
+  try {
+    await client.connect()
+    const res = await client.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"
+    )
+    const tables = res.rows.map(r => r.table_name)
+    log('INFO', 'list_tables success', { count: tables.length })
+    return tables.length > 0
+      ? `Tables in public schema: ${tables.join(', ')}`
+      : 'No tables found in public schema.'
+  } catch (err) {
+    log('ERROR', 'list_tables failed', { error: err.message })
+    throw err
+  } finally {
+    await client.end()
+  }
+}
+
 // MCP Server setup
 const server = new McpServer({
   name: 'db-tools',
   version: '1.0.0'
 })
+
+server.tool(
+  'list_tables',
+  "List all tables in the user's database. Use this to see what tables already exist before creating new ones.",
+  {},
+  async () => {
+    try {
+      const result = await handleListTables()
+      return { content: [{ type: 'text', text: result }] }
+    } catch (err) {
+      log('ERROR', 'list_tables failed', { error: err.message })
+      return { content: [{ type: 'text', text: `Error listing tables: ${err.message}` }], isError: true }
+    }
+  }
+)
 
 server.tool(
   'create_table',
