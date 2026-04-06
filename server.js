@@ -152,8 +152,8 @@ app.post('/chat/tools', auth, (req, res) => {
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'message is required' })
   }
-  if (!credentials?.supabaseUrl || !credentials?.serviceRoleKey || !credentials?.anonKey) {
-    return res.status(400).json({ error: 'credentials (supabaseUrl, serviceRoleKey, anonKey) are required' })
+  if (!credentials?.supabaseUrl || !credentials?.accessToken || !credentials?.projectRef || !credentials?.anonKey) {
+    return res.status(400).json({ error: 'credentials (supabaseUrl, accessToken, projectRef, anonKey) are required' })
   }
 
   req.setTimeout(0)
@@ -170,7 +170,8 @@ app.post('/chat/tools', auth, (req, res) => {
         args: [MCP_SERVER_PATH],
         env: {
           SUPABASE_URL: credentials.supabaseUrl,
-          SUPABASE_SERVICE_ROLE_KEY: credentials.serviceRoleKey,
+          SUPABASE_ACCESS_TOKEN: credentials.accessToken,
+          SUPABASE_PROJECT_REF: credentials.projectRef,
           SUPABASE_ANON_KEY: credentials.anonKey
         }
       }

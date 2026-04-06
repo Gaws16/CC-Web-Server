@@ -1,10 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import pg from 'pg'
 import { appendFileSync } from 'fs'
 import { z } from 'zod'
-
-const { Client } = pg
 
 const LOG_FILE = process.env.MCP_LOG_FILE || '/var/log/mcp-db-tools.log'
 
@@ -14,7 +11,8 @@ function log(level, msg, data) {
 }
 
 const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+const SUPABASE_ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN
+const SUPABASE_PROJECT_REF = process.env.SUPABASE_PROJECT_REF
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 
 const RESERVED_NAMES = ['users', 'auth', 'storage']
@@ -29,33 +27,27 @@ const TYPE_MAP = {
   real: 'double precision'
 }
 
-function getDbClient() {
-  const ref = SUPABASE_URL.match(/https:\/\/([^.]+)/)?.[1]
-  if (!ref) throw new Error('Invalid SUPABASE_URL format')
-
-  return new Client({
-    host: `db.${ref}.supabase.co`,
-    port: 5432,
-    user: 'postgres',
-    password: SUPABASE_SERVICE_ROLE_KEY,
-    database: 'postgres',
-    ssl: { rejectUnauthorized: false }
-  })
-}
-
 async function execSQL(sql) {
-  const client = getDbClient()
-  try {
-    await client.connect()
-    log('INFO', 'Postgres connected')
-    await client.query(sql)
-    log('INFO', 'SQL executed successfully')
-  } catch (err) {
-    log('ERROR', 'SQL execution failed', { error: err.message })
-    throw err
-  } finally {
-    await client.end()
+  log('INFO', 'Executing SQL via Management API', { sql_length: sql.length })
+  const response = await fetch(
+    `https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+    }
+  )
+  if (!response.ok) {
+    const error = await response.text()
+    log('ERROR', 'SQL execution failed', { status: response.status, error })
+    throw new Error(`SQL execution failed: ${error}`)
   }
+  const result = await response.json()
+  log('INFO', 'SQL executed successfully')
+  return result
 }
 
 function validateName(name, label) {
@@ -179,23 +171,14 @@ CREATE POLICY "Users can delete own rows" ON "public"."${table}"
 // Tool: list_tables
 async function handleListTables() {
   log('INFO', 'list_tables called')
-  const client = getDbClient()
-  try {
-    await client.connect()
-    const res = await client.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"
-    )
-    const tables = res.rows.map(r => r.table_name)
-    log('INFO', 'list_tables success', { count: tables.length })
-    return tables.length > 0
-      ? `Tables in public schema: ${tables.join(', ')}`
-      : 'No tables found in public schema.'
-  } catch (err) {
-    log('ERROR', 'list_tables failed', { error: err.message })
-    throw err
-  } finally {
-    await client.end()
-  }
+  const result = await execSQL(
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"
+  )
+  const tables = Array.isArray(result) ? result.map(r => r.table_name) : []
+  log('INFO', 'list_tables success', { count: tables.length })
+  return tables.length > 0
+    ? `Tables in public schema: ${tables.join(', ')}`
+    : 'No tables found in public schema.'
 }
 
 // MCP Server setup
@@ -259,7 +242,7 @@ server.tool(
   }
 )
 
-log('INFO', 'MCP db-tools server starting', { supabaseUrl: SUPABASE_URL ? SUPABASE_URL.slice(0, 30) + '...' : 'NOT SET' })
+log('INFO', 'MCP db-tools server starting', { projectRef: SUPABASE_PROJECT_REF || 'NOT SET' })
 
 const transport = new StdioServerTransport()
 await server.connect(transport)
