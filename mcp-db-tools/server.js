@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import pg from 'pg'
 import { appendFileSync } from 'fs'
+import { z } from 'zod'
 
 const { Client } = pg
 
@@ -185,27 +186,13 @@ server.tool(
   'create_table',
   "Create a new table in the user's database. Use this when the user needs to store data (contacts, products, bookings, etc). The table will be created with Row Level Security enabled.",
   {
-    table_name: {
-      type: 'string',
-      description: "Snake_case table name, e.g. 'contacts', 'menu_items', 'blog_posts'"
-    },
-    columns: {
-      type: 'array',
-      description: 'List of columns to create (id, created_at are added automatically)',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Snake_case column name' },
-          type: { type: 'string', enum: ['text', 'integer', 'boolean', 'timestamp', 'real'], description: 'Column data type' },
-          required: { type: 'boolean', description: 'Whether the column is NOT NULL (default false)' }
-        },
-        required: ['name', 'type']
-      }
-    },
-    enable_rls_for_auth: {
-      type: 'boolean',
-      description: 'If true, RLS policies restrict rows to the authenticated user (requires auth.uid()). If false, allows public read/write. Default false.'
-    }
+    table_name: z.string().describe("Snake_case table name, e.g. 'contacts', 'menu_items', 'blog_posts'"),
+    columns: z.array(z.object({
+      name: z.string().describe('Snake_case column name'),
+      type: z.enum(['text', 'integer', 'boolean', 'timestamp', 'real']).describe('Column data type'),
+      required: z.boolean().optional().describe('Whether the column is NOT NULL (default false)')
+    })).describe('List of columns to create (id, created_at are added automatically)'),
+    enable_rls_for_auth: z.boolean().optional().describe('If true, RLS policies restrict rows to the authenticated user. If false, allows public read/write. Default false.')
   },
   async ({ table_name, columns, enable_rls_for_auth }) => {
     try {
@@ -222,11 +209,7 @@ server.tool(
   'enable_auth',
   "Enable authentication for the project. This prepares the database for user accounts. After calling this, you can generate login, signup, and protected pages. Use this when the user wants user accounts, login pages, or access control.",
   {
-    project_tables: {
-      type: 'array',
-      description: 'Names of existing tables to add auth RLS policies to (optional)',
-      items: { type: 'string' }
-    }
+    project_tables: z.array(z.string()).optional().describe('Names of existing tables to add auth RLS policies to')
   },
   async ({ project_tables }) => {
     try {
