@@ -1,8 +1,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import pg from 'pg'
+import { appendFileSync } from 'fs'
 
 const { Client } = pg
+
+const LOG_FILE = process.env.MCP_LOG_FILE || '/var/log/mcp-db-tools.log'
+
+function log(level, msg, data) {
+  const entry = `[${new Date().toISOString()}] [${level}] ${msg}${data ? ' ' + JSON.stringify(data) : ''}\n`
+  try { appendFileSync(LOG_FILE, entry) } catch {}
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -38,7 +46,12 @@ async function execSQL(sql) {
   const client = getDbClient()
   try {
     await client.connect()
+    log('INFO', 'Postgres connected')
     await client.query(sql)
+    log('INFO', 'SQL executed successfully')
+  } catch (err) {
+    log('ERROR', 'SQL execution failed', { error: err.message })
+    throw err
   } finally {
     await client.end()
   }
@@ -60,6 +73,7 @@ function validateName(name, label) {
 
 // Tool: create_table
 async function handleCreateTable({ table_name, columns, enable_rls_for_auth = false }) {
+  log('INFO', 'create_table called', { table_name, columns: columns?.length, enable_rls_for_auth })
   validateName(table_name, 'table name')
 
   if (!columns || columns.length === 0) throw new Error('At least one column is required.')
@@ -115,15 +129,19 @@ CREATE POLICY "Allow public insert" ON "public"."${table_name}"
 `
   }
 
+  log('INFO', 'create_table executing SQL', { table_name, sql_length: sql.length })
   await execSQL(sql)
 
   const colList = columns.filter(c => !c._isAuthRef).map(c => `${c.name} (${c.type})`).join(', ')
   const accessType = enable_rls_for_auth ? 'auth-scoped' : 'public'
-  return `Table '${table_name}' created successfully with columns: ${colList}. RLS enabled with ${accessType} access policies.`
+  const result = `Table '${table_name}' created successfully with columns: ${colList}. RLS enabled with ${accessType} access policies.`
+  log('INFO', 'create_table success', { table_name })
+  return result
 }
 
 // Tool: enable_auth
 async function handleEnableAuth({ project_tables = [] }) {
+  log('INFO', 'enable_auth called', { project_tables })
   const results = []
 
   for (const table of project_tables) {
@@ -194,6 +212,7 @@ server.tool(
       const result = await handleCreateTable({ table_name, columns, enable_rls_for_auth })
       return { content: [{ type: 'text', text: result }] }
     } catch (err) {
+      log('ERROR', 'create_table failed', { error: err.message })
       return { content: [{ type: 'text', text: `Error creating table: ${err.message}` }], isError: true }
     }
   }
@@ -214,10 +233,13 @@ server.tool(
       const result = await handleEnableAuth({ project_tables })
       return { content: [{ type: 'text', text: result }] }
     } catch (err) {
+      log('ERROR', 'enable_auth failed', { error: err.message })
       return { content: [{ type: 'text', text: `Error enabling auth: ${err.message}` }], isError: true }
     }
   }
 )
+
+log('INFO', 'MCP db-tools server starting', { supabaseUrl: SUPABASE_URL ? SUPABASE_URL.slice(0, 30) + '...' : 'NOT SET' })
 
 const transport = new StdioServerTransport()
 await server.connect(transport)
