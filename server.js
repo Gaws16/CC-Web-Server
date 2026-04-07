@@ -165,15 +165,9 @@ app.post('/chat/tools', auth, (req, res) => {
   // Write temp MCP config with per-request credentials
   const mcpConfig = {
     mcpServers: {
-      db: {
-        command: 'node',
-        args: [MCP_SERVER_PATH],
-        env: {
-          SUPABASE_URL: credentials.supabaseUrl,
-          SUPABASE_ACCESS_TOKEN: credentials.accessToken,
-          SUPABASE_PROJECT_REF: credentials.projectRef,
-          SUPABASE_ANON_KEY: credentials.anonKey
-        }
+      supabase: {
+        command: 'npx',
+        args: ['-y', '@supabase/mcp-server-supabase', '--access-token', credentials.accessToken, '--project-ref', credentials.projectRef]
       }
     }
   }
@@ -214,7 +208,7 @@ app.post('/chat/tools', auth, (req, res) => {
       message,
       systemPrompt,
       mcpConfigPath,
-      allowedTools: 'mcp__db__list_tables,mcp__db__create_table,mcp__db__enable_auth',
+      allowedTools: 'mcp__supabase__list_tables,mcp__supabase__execute_sql,mcp__supabase__apply_migration',
       model: CC_MODEL,
       timeoutMs: CC_TOOLS_TIMEOUT_MS,
       onTextDelta(text) {
