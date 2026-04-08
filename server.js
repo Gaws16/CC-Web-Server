@@ -6,6 +6,7 @@ const auth = require('./src/auth')
 const RequestQueue = require('./src/queue')
 const sessions = require('./src/sessions')
 const { runClaude, runClaudeWithTools, sseToken, sseDone, sseError, sseHeartbeat, sseTextDelta, sseToolStart, sseToolResult, sseToolDone } = require('./src/claude')
+const logbus = require('./src/logbus')
 const { writeFileSync, unlinkSync } = require('fs')
 const { randomUUID } = require('crypto')
 const path = require('path')
@@ -53,6 +54,39 @@ app.get('/health', (_req, res) => {
     queueDepth: queue.depth,
     uptime: Math.floor(process.uptime())
   })
+})
+
+// Live log stream — SSE
+app.get('/logs', auth, (req, res) => {
+  req.setTimeout(0)
+  res.setTimeout(0)
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
+  const onLog = (entry) => {
+    res.write(`data: ${JSON.stringify(entry)}\n\n`)
+  }
+
+  logbus.on('log', onLog)
+
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000)
+
+  res.on('close', () => {
+    clearInterval(heartbeat)
+    logbus.off('log', onLog)
+  })
+})
+
+// Ingest external logs
+app.post('/logs', auth, (req, res) => {
+  const entries = Array.isArray(req.body) ? req.body : [req.body]
+  for (const entry of entries) {
+    logbus.push(entry)
+  }
+  res.json({ accepted: entries.length })
 })
 
 // Chat — SSE stream
@@ -106,6 +140,8 @@ app.post('/chat', auth, (req, res) => {
       }
     })
 
+    logbus.push({ source: 'proxy', event: 'chat_start', message: `client=${clientId} session=${sessionId || 'new'}`, meta: { clientId, sessionId } })
+
     child = runClaude({
       message,
       systemPrompt: effectiveSystemPrompt,
@@ -113,7 +149,10 @@ app.post('/chat', auth, (req, res) => {
       model: CC_MODEL,
       timeoutMs: CC_TIMEOUT_MS,
       onToken(text) {
-        if (!done) sseToken(res, text)
+        if (!done) {
+          sseToken(res, text)
+          logbus.push({ source: 'cc', event: 'token', message: text, meta: { clientId } })
+        }
       },
       onDone(newSessionId) {
         if (done) return
@@ -122,6 +161,7 @@ app.post('/chat', auth, (req, res) => {
         if (newSessionId) {
           sessions.set(clientId, newSessionId)
         }
+        logbus.push({ source: 'cc', event: 'done', message: `session=${newSessionId}`, meta: { clientId, sessionId: newSessionId } })
         sseDone(res, newSessionId, clientId)
         resolve()
       },
@@ -129,6 +169,7 @@ app.post('/chat', auth, (req, res) => {
         if (done) return
         done = true
         clearInterval(heartbeat)
+        logbus.push({ source: 'cc', level: 'error', event: 'error', message: msg, meta: { clientId, code } })
         sseError(res, code, msg)
         resolve()
       }
@@ -204,6 +245,8 @@ app.post('/chat/tools', auth, (req, res) => {
       }
     })
 
+    logbus.push({ source: 'proxy', event: 'tools_start', message: `mcp request id=${requestId}`, meta: { requestId } })
+
     child = runClaudeWithTools({
       message,
       systemPrompt,
@@ -212,18 +255,28 @@ app.post('/chat/tools', auth, (req, res) => {
       model: CC_MODEL,
       timeoutMs: CC_TOOLS_TIMEOUT_MS,
       onTextDelta(text) {
-        if (!done) sseTextDelta(res, text)
+        if (!done) {
+          sseTextDelta(res, text)
+          logbus.push({ source: 'mcp', event: 'text_delta', message: text, meta: { requestId } })
+        }
       },
       onToolStart(tool, input) {
-        if (!done) sseToolStart(res, tool, input)
+        if (!done) {
+          sseToolStart(res, tool, input)
+          logbus.push({ source: 'mcp', event: 'tool_start', message: `tool=${tool}`, meta: { requestId, tool, input } })
+        }
       },
       onToolResult(tool, result) {
-        if (!done) sseToolResult(res, tool, result)
+        if (!done) {
+          sseToolResult(res, tool, result)
+          logbus.push({ source: 'mcp', event: 'tool_result', message: `tool=${tool}`, meta: { requestId, tool, result } })
+        }
       },
       onDone() {
         if (done) return
         done = true
         clearInterval(heartbeat)
+        logbus.push({ source: 'mcp', event: 'done', message: `request=${requestId} complete`, meta: { requestId } })
         sseToolDone(res)
         cleanupConfig()
         resolve()
@@ -232,6 +285,7 @@ app.post('/chat/tools', auth, (req, res) => {
         if (done) return
         done = true
         clearInterval(heartbeat)
+        logbus.push({ source: 'mcp', level: 'error', event: 'error', message: msg, meta: { requestId, code } })
         sseError(res, code, msg)
         cleanupConfig()
         resolve()
