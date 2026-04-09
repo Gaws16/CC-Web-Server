@@ -140,7 +140,10 @@ app.post('/chat', auth, (req, res) => {
       }
     })
 
-    logbus.push({ source: 'proxy', event: 'chat_start', message: `client=${clientId} session=${sessionId || 'new'}`, meta: { clientId, sessionId } })
+    const chatStart = Date.now()
+    let firstTokenAt = null
+
+    logbus.push({ source: 'proxy', event: 'chat_start', message: `client=${clientId} session=${sessionId || 'new'}`, meta: { clientId, sessionId, ts: chatStart } })
 
     child = runClaude({
       message,
@@ -150,8 +153,8 @@ app.post('/chat', auth, (req, res) => {
       timeoutMs: CC_TIMEOUT_MS,
       onToken(text) {
         if (!done) {
+          if (!firstTokenAt) firstTokenAt = Date.now()
           sseToken(res, text)
-          logbus.push({ source: 'cc', event: 'token', message: text, meta: { clientId } })
         }
       },
       onDone(newSessionId) {
@@ -161,7 +164,9 @@ app.post('/chat', auth, (req, res) => {
         if (newSessionId) {
           sessions.set(clientId, newSessionId)
         }
-        logbus.push({ source: 'cc', event: 'done', message: `session=${newSessionId}`, meta: { clientId, sessionId: newSessionId } })
+        const totalMs = Date.now() - chatStart
+        const ttfbMs = firstTokenAt ? firstTokenAt - chatStart : null
+        logbus.push({ source: 'cc', event: 'done', message: `session=${newSessionId} ${totalMs}ms ttfb=${ttfbMs}ms`, meta: { clientId, sessionId: newSessionId, totalMs, ttfbMs } })
         sseDone(res, newSessionId, clientId)
         resolve()
       },
