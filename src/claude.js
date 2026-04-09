@@ -185,6 +185,14 @@ function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools
   }
 
   function processEvent(event) {
+    // Debug: log every event type to understand Claude CLI's stream format
+    const debugInfo = { type: event.type, subtype: event.subtype }
+    if (event.message?.content) {
+      debugInfo.blockTypes = event.message.content.map(b => b.type)
+    }
+    if (event.tool_name || event.name) debugInfo.toolName = event.tool_name || event.name
+    console.log('[mcp-debug]', JSON.stringify(debugInfo))
+
     // Assistant message — contains text blocks and tool_use blocks
     if (event.type === 'assistant' && event.message?.content) {
       for (const block of event.message.content) {
