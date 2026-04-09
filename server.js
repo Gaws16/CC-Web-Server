@@ -40,7 +40,7 @@ app.use(express.json())
 const PORT = parseInt(process.env.PORT, 10) || 4242
 const BIND_HOST = process.env.BIND_HOST || '127.0.0.1'
 const CC_TIMEOUT_MS = parseInt(process.env.CC_TIMEOUT_MS, 10) || 60000
-const CC_TOOLS_TIMEOUT_MS = parseInt(process.env.CC_TOOLS_TIMEOUT_MS, 10) || 120000
+const CC_TOOLS_TIMEOUT_MS = parseInt(process.env.CC_TOOLS_TIMEOUT_MS, 10) || 300000
 const MCP_SERVER_PATH = process.env.MCP_SERVER_PATH || '/opt/mcp-db-tools/server.js'
 const CC_MODEL = process.env.CC_MODEL || undefined
 const QUEUE_MAX_DEPTH = parseInt(process.env.QUEUE_MAX_DEPTH, 10) || 10
@@ -207,8 +207,8 @@ app.post('/chat/tools', auth, (req, res) => {
   const mcpConfig = {
     mcpServers: {
       supabase: {
-        command: 'npx',
-        args: ['-y', '@supabase/mcp-server-supabase', '--access-token', credentials.accessToken, '--project-ref', credentials.projectRef]
+        command: 'mcp-server-supabase',
+        args: ['--access-token', credentials.accessToken, '--project-ref', credentials.projectRef]
       }
     }
   }
@@ -245,7 +245,11 @@ app.post('/chat/tools', auth, (req, res) => {
       }
     })
 
-    logbus.push({ source: 'proxy', event: 'tools_start', message: `mcp request id=${requestId}`, meta: { requestId } })
+    const requestStart = Date.now()
+    let toolTimers = {}
+    let turnCount = 0
+
+    logbus.push({ source: 'proxy', event: 'tools_start', message: `mcp request id=${requestId}`, meta: { requestId, ts: requestStart } })
 
     child = runClaudeWithTools({
       message,
@@ -257,26 +261,29 @@ app.post('/chat/tools', auth, (req, res) => {
       onTextDelta(text) {
         if (!done) {
           sseTextDelta(res, text)
-          logbus.push({ source: 'mcp', event: 'text_delta', message: text, meta: { requestId } })
         }
       },
       onToolStart(tool, input) {
         if (!done) {
+          turnCount++
+          toolTimers[tool] = Date.now()
           sseToolStart(res, tool, input)
-          logbus.push({ source: 'mcp', event: 'tool_start', message: `tool=${tool}`, meta: { requestId, tool, input } })
+          logbus.push({ source: 'mcp', event: 'tool_start', message: `tool=${tool}`, meta: { requestId, tool, input, ts: toolTimers[tool] } })
         }
       },
       onToolResult(tool, result) {
         if (!done) {
+          const elapsed = toolTimers[tool] ? Date.now() - toolTimers[tool] : null
           sseToolResult(res, tool, result)
-          logbus.push({ source: 'mcp', event: 'tool_result', message: `tool=${tool}`, meta: { requestId, tool, result } })
+          logbus.push({ source: 'mcp', event: 'tool_result', message: `tool=${tool} ${elapsed}ms`, meta: { requestId, tool, elapsedMs: elapsed } })
         }
       },
       onDone() {
         if (done) return
         done = true
         clearInterval(heartbeat)
-        logbus.push({ source: 'mcp', event: 'done', message: `request=${requestId} complete`, meta: { requestId } })
+        const totalMs = Date.now() - requestStart
+        logbus.push({ source: 'mcp', event: 'done', message: `request=${requestId} complete ${totalMs}ms turns=${turnCount}`, meta: { requestId, totalMs, turnCount } })
         sseToolDone(res)
         cleanupConfig()
         resolve()
