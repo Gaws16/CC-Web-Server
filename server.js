@@ -166,6 +166,7 @@ app.post('/chat', auth, (req, res) => {
         }
         const totalMs = Date.now() - chatStart
         const ttfbMs = firstTokenAt ? firstTokenAt - chatStart : null
+        console.log(`[chat] total=${totalMs}ms ttfb=${ttfbMs}ms client=${clientId}`)
         logbus.push({ source: 'cc', event: 'done', message: `session=${newSessionId} ${totalMs}ms ttfb=${ttfbMs}ms`, meta: { clientId, sessionId: newSessionId, totalMs, ttfbMs } })
         sseDone(res, newSessionId, clientId)
         resolve()
@@ -288,6 +289,7 @@ app.post('/chat/tools', auth, (req, res) => {
         done = true
         clearInterval(heartbeat)
         const totalMs = Date.now() - requestStart
+        console.log(`[tools] total=${totalMs}ms turns=${turnCount} request=${requestId}`)
         logbus.push({ source: 'mcp', event: 'done', message: `request=${requestId} complete ${totalMs}ms turns=${turnCount}`, meta: { requestId, totalMs, turnCount } })
         sseToolDone(res)
         cleanupConfig()
