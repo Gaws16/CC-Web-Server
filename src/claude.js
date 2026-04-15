@@ -27,15 +27,18 @@ function sseHeartbeat(res) {
 }
 
 function runClaude({ message, systemPrompt, sessionId, model, timeoutMs, onToken, onDone, onError }) {
-  const args = ['-p', message, '--output-format', 'stream-json', '--verbose']
+  const args = ['-p', '--output-format', 'stream-json', '--verbose']
   if (sessionId) args.push('--resume', sessionId)
   if (systemPrompt) args.push('--system-prompt', systemPrompt)
   if (model) args.push('--model', model)
 
+  // Prompt is piped via stdin (not argv) so payloads >ARG_MAX don't fail with E2BIG.
   const child = spawn('claude', args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env }
   })
+  child.stdin.on('error', () => {})
+  child.stdin.end(message)
 
   let stderr = ''
   let newSessionId = null
@@ -160,15 +163,18 @@ function sseToolDone(res) {
 
 function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools, model, timeoutMs, onTextDelta, onToolStart, onToolResult, onDone, onError }) {
   const prompt = systemPrompt ? `${systemPrompt}\n\n${message}` : message
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--tools', '']
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--tools', '']
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath)
   if (allowedTools) args.push('--allowedTools', allowedTools)
   if (model) args.push('--model', model)
 
+  // Prompt is piped via stdin (not argv) so payloads >ARG_MAX don't fail with E2BIG.
   const child = spawn('claude', args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env }
   })
+  child.stdin.on('error', () => {})
+  child.stdin.end(prompt)
 
   let stderr = ''
   let gotOutput = false

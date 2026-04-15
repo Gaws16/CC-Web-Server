@@ -35,7 +35,7 @@ app.use((req, res, next) => {
   next()
 })
 
-app.use(express.json())
+app.use(express.json({ limit: process.env.MAX_BODY_SIZE || '1mb' }))
 
 const PORT = parseInt(process.env.PORT, 10) || 4242
 const BIND_HOST = process.env.BIND_HOST || '127.0.0.1'
