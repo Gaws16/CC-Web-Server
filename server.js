@@ -91,7 +91,7 @@ app.post('/logs', auth, (req, res) => {
 
 // Chat — SSE stream
 app.post('/chat', auth, (req, res) => {
-  const { message, systemPrompt, resumeSession = true } = req.body
+  const { message, systemPrompt, model, resumeSession = true } = req.body
   const clientId = req.clientId
 
   if (!message || typeof message !== 'string') {
@@ -149,7 +149,7 @@ app.post('/chat', auth, (req, res) => {
       message,
       systemPrompt: effectiveSystemPrompt,
       sessionId,
-      model: CC_MODEL,
+      model: model || CC_MODEL,
       timeoutMs: CC_TIMEOUT_MS,
       onToken(text) {
         if (!done) {
@@ -194,7 +194,7 @@ app.post('/chat', auth, (req, res) => {
 
 // Chat with tools — SSE stream with MCP
 app.post('/chat/tools', auth, (req, res) => {
-  const { message, systemPrompt, credentials } = req.body
+  const { message, systemPrompt, model, credentials } = req.body
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'message is required' })
@@ -262,7 +262,7 @@ app.post('/chat/tools', auth, (req, res) => {
       systemPrompt,
       mcpConfigPath,
       allowedTools: 'mcp__supabase__list_tables,mcp__supabase__execute_sql,mcp__supabase__apply_migration',
-      model: CC_MODEL,
+      model: model || CC_MODEL,
       timeoutMs: CC_TOOLS_TIMEOUT_MS,
       onTextDelta(text) {
         if (!done) {
