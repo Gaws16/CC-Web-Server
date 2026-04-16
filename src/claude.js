@@ -3,8 +3,30 @@ const { spawn } = require('child_process')
 const STDERR_SENSITIVE = /\/Users\/[^\s]+|\/home\/[^\s]+|key|token|secret/gi
 
 function sanitiseStderr(raw) {
-  if (!raw) return 'Unknown error'
-  return raw.slice(0, 200).replace(STDERR_SENSITIVE, '[redacted]')
+  if (!raw || !raw.trim()) return ''
+  return raw.slice(0, 400).replace(STDERR_SENSITIVE, '[redacted]')
+}
+
+// Build a real error string for the SSE error event. Never returns a bare
+// "Unknown error" — always includes exit code, signal, err.code/syscall,
+// err.message, and a sanitised stderr slice if available.
+function formatError({ phase, err, code, signal, stderr, extra }) {
+  const parts = [`[${phase}]`]
+  if (err && err.code) parts.push(err.code)
+  if (err && err.syscall) parts.push(`(${err.syscall})`)
+  if (err && err.message) parts.push(err.message)
+  if (signal) parts.push(`signal=${signal}`)
+  else if (code !== undefined && code !== null) parts.push(`exit=${code}`)
+  else if (code === null && !err) parts.push('exit=null')
+  const clean = sanitiseStderr(stderr)
+  if (clean) parts.push(`stderr="${clean}"`)
+  if (extra) parts.push(extra)
+  if (parts.length === 1) parts.push('no error details available')
+  return parts.join(' ')
+}
+
+function logErr(phase, payload) {
+  console.error(`[${phase}] error:`, payload)
 }
 
 // SSE helpers
@@ -37,7 +59,7 @@ function runClaude({ message, systemPrompt, sessionId, model, timeoutMs, onToken
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env }
   })
-  child.stdin.on('error', () => {})
+  child.stdin.on('error', (err) => logErr('chat', { where: 'stdin', err }))
   child.stdin.end(message)
 
   let stderr = ''
@@ -90,7 +112,7 @@ function runClaude({ message, systemPrompt, sessionId, model, timeoutMs, onToken
     stderr += chunk.toString()
   })
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
     // Flush remaining buffer
     if (lineBuffer.trim()) {
       try {
@@ -117,16 +139,22 @@ function runClaude({ message, systemPrompt, sessionId, model, timeoutMs, onToken
       return finish(() => onError(500, 'claude not authenticated'))
     }
     if (code !== 0) {
-      return finish(() => onError(500, sanitiseStderr(stderr)))
+      const msg = formatError({ phase: 'chat', code, signal, stderr })
+      logErr('chat', { code, signal, stderr: sanitiseStderr(stderr) })
+      return finish(() => onError(500, msg))
     }
     if (!gotOutput) {
-      return finish(() => onError(500, 'CC returned no output'))
+      const msg = formatError({ phase: 'chat', code, signal, stderr, extra: 'CC returned no output' })
+      logErr('chat', { code, signal, stderr: sanitiseStderr(stderr), gotOutput: false })
+      return finish(() => onError(500, msg))
     }
     finish(() => onDone(newSessionId))
   })
 
   child.on('error', (err) => {
-    finish(() => onError(500, err.message))
+    const msg = formatError({ phase: 'chat', err, stderr })
+    logErr('chat', { err, stderr: sanitiseStderr(stderr) })
+    finish(() => onError(500, msg))
   })
 
   // Timeout handling
@@ -135,7 +163,8 @@ function runClaude({ message, systemPrompt, sessionId, model, timeoutMs, onToken
     setTimeout(() => {
       if (!child.killed) child.kill('SIGKILL')
     }, 2000)
-    finish(() => onError(504, 'CC process timed out'))
+    logErr('chat', { timeout: timeoutMs })
+    finish(() => onError(504, `CC process timed out after ${timeoutMs}ms`))
   }, timeoutMs)
 
   child.on('close', () => clearTimeout(timer))
@@ -173,7 +202,7 @@ function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env }
   })
-  child.stdin.on('error', () => {})
+  child.stdin.on('error', (err) => logErr('tools', { where: 'stdin', err }))
   child.stdin.end(prompt)
 
   let stderr = ''
@@ -255,7 +284,7 @@ function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools
     stderr += chunk.toString()
   })
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
     // Flush remaining buffer
     if (lineBuffer.trim()) {
       try {
@@ -267,16 +296,22 @@ function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools
       return finish(() => onError(500, 'claude not authenticated'))
     }
     if (code !== 0 && code !== null) {
-      return finish(() => onError(500, sanitiseStderr(stderr)))
+      const msg = formatError({ phase: 'tools', code, signal, stderr })
+      logErr('tools', { code, signal, stderr: sanitiseStderr(stderr) })
+      return finish(() => onError(500, msg))
     }
     if (!gotOutput) {
-      return finish(() => onError(500, 'CC returned no output'))
+      const msg = formatError({ phase: 'tools', code, signal, stderr, extra: 'CC returned no output' })
+      logErr('tools', { code, signal, stderr: sanitiseStderr(stderr), gotOutput: false })
+      return finish(() => onError(500, msg))
     }
     finish(() => onDone())
   })
 
   child.on('error', (err) => {
-    finish(() => onError(500, err.message))
+    const msg = formatError({ phase: 'tools', err, stderr })
+    logErr('tools', { err, stderr: sanitiseStderr(stderr) })
+    finish(() => onError(500, msg))
   })
 
   const timer = setTimeout(() => {
@@ -284,7 +319,8 @@ function runClaudeWithTools({ message, systemPrompt, mcpConfigPath, allowedTools
     setTimeout(() => {
       if (!child.killed) child.kill('SIGKILL')
     }, 2000)
-    finish(() => onError(504, 'CC process timed out'))
+    logErr('tools', { timeout: timeoutMs })
+    finish(() => onError(504, `CC process timed out after ${timeoutMs}ms`))
   }, timeoutMs)
 
   child.on('close', () => clearTimeout(timer))
