@@ -44,14 +44,22 @@ const CC_TOOLS_TIMEOUT_MS = parseInt(process.env.CC_TOOLS_TIMEOUT_MS, 10) || 300
 const MCP_SERVER_PATH = process.env.MCP_SERVER_PATH || '/opt/mcp-db-tools/server.js'
 const CC_MODEL = process.env.CC_MODEL || undefined
 const QUEUE_MAX_DEPTH = parseInt(process.env.QUEUE_MAX_DEPTH, 10) || 10
+const QUEUE_MAX_CONCURRENT = parseInt(process.env.QUEUE_MAX_CONCURRENT, 10) || 4
 
-const queue = new RequestQueue(QUEUE_MAX_DEPTH)
+const queue = new RequestQueue(QUEUE_MAX_DEPTH, QUEUE_MAX_CONCURRENT)
+
+// Session IDs currently being resumed by an in-flight /chat request.
+// Prevents concurrent same-client requests from resuming — and corrupting —
+// the same Claude CLI transcript; collisions start a fresh session instead.
+const inFlightSessions = new Set()
 
 // Health — no auth
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     queueDepth: queue.depth,
+    active: queue.active,
+    maxConcurrent: queue.maxConcurrent,
     uptime: Math.floor(process.uptime())
   })
 })
@@ -116,15 +124,34 @@ app.post('/chat', auth, (req, res) => {
     // Heartbeat
     const heartbeat = setInterval(() => sseHeartbeat(res), 15000)
 
-    // Session lookup
+    // Session lookup. If another in-flight request is already resuming this
+    // session, start fresh instead — concurrent --resume of one session would
+    // corrupt its transcript.
     let sessionId = null
+    let resumedSessionId = null
     if (resumeSession) {
       const existing = sessions.get(clientId)
-      if (existing) sessionId = existing.sessionId
+      if (existing) {
+        if (inFlightSessions.has(existing.sessionId)) {
+          logbus.push({ source: 'proxy', event: 'session_busy', message: `client=${clientId} session=${existing.sessionId} busy, starting fresh`, meta: { clientId, sessionId: existing.sessionId } })
+        } else {
+          sessionId = existing.sessionId
+          resumedSessionId = sessionId
+          inFlightSessions.add(sessionId)
+        }
+      }
     }
 
     // Always pass systemPrompt so Claude keeps its role on resumed sessions
     const effectiveSystemPrompt = systemPrompt || undefined
+
+    // Release the resumed session back to the pool (idempotent).
+    function releaseSession() {
+      if (resumedSessionId) {
+        inFlightSessions.delete(resumedSessionId)
+        resumedSessionId = null
+      }
+    }
 
     // Client disconnect — kill CC subprocess only if we didn't finish normally
     let child = null
@@ -133,6 +160,7 @@ app.post('/chat', auth, (req, res) => {
         console.log('[server] client disconnected early, killing child')
         done = true
         clearInterval(heartbeat)
+        releaseSession()
         if (child && !child.killed) {
           child.kill('SIGTERM')
         }
@@ -161,6 +189,7 @@ app.post('/chat', auth, (req, res) => {
         if (done) return
         done = true
         clearInterval(heartbeat)
+        releaseSession()
         if (newSessionId) {
           sessions.set(clientId, newSessionId)
         }
@@ -175,6 +204,7 @@ app.post('/chat', auth, (req, res) => {
         if (done) return
         done = true
         clearInterval(heartbeat)
+        releaseSession()
         logbus.push({ source: 'cc', level: 'error', event: 'error', message: msg, meta: { clientId, code } })
         sseError(res, code, msg)
         resolve()
@@ -328,5 +358,5 @@ app.delete('/session/:clientId', auth, (req, res) => {
 app.listen(PORT, BIND_HOST, () => {
   console.log(`CC Proxy Server listening on ${BIND_HOST}:${PORT}`)
   console.log(`Model: ${CC_MODEL || 'default'}`)
-  console.log(`Timeout: ${CC_TIMEOUT_MS}ms | Queue max: ${QUEUE_MAX_DEPTH}`)
+  console.log(`Timeout: ${CC_TIMEOUT_MS}ms | Concurrency: ${QUEUE_MAX_CONCURRENT} | Queue max: ${QUEUE_MAX_DEPTH}`)
 })

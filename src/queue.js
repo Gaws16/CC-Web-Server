@@ -1,12 +1,17 @@
 class RequestQueue {
-  constructor(maxDepth = 10) {
+  constructor(maxDepth = 10, maxConcurrent = 1) {
     this.maxDepth = maxDepth
+    this.maxConcurrent = maxConcurrent
     this.pending = []
-    this.running = false
+    this.running = 0
   }
 
   get depth() {
-    return this.pending.length + (this.running ? 1 : 0)
+    return this.pending.length + this.running
+  }
+
+  get active() {
+    return this.running
   }
 
   enqueue(jobFn) {
@@ -19,20 +24,19 @@ class RequestQueue {
     })
   }
 
-  async _process() {
-    if (this.running) return
-    const next = this.pending.shift()
-    if (!next) return
-
-    this.running = true
-    try {
-      const result = await next.jobFn()
-      next.resolve(result)
-    } catch (err) {
-      next.reject(err)
-    } finally {
-      this.running = false
-      this._process()
+  // Drain pending jobs up to maxConcurrent slots. Each settled job frees its
+  // slot and re-drains, so a finished job immediately admits a waiting one.
+  _process() {
+    while (this.running < this.maxConcurrent && this.pending.length > 0) {
+      const next = this.pending.shift()
+      this.running++
+      Promise.resolve()
+        .then(next.jobFn)
+        .then(next.resolve, next.reject)
+        .finally(() => {
+          this.running--
+          this._process()
+        })
     }
   }
 }
